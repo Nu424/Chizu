@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ちずめ</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.8.0/dist/leaflet.css"
+        integrity="sha512-hoalWLoI8r4UszCkZ5kL8vayOGVae1oxXe/2A4AO6J9+580uKHDO3JdHb7NzwwzK5xr/Fs0W40kiNHxM9vyTtQ=="
+        crossorigin="" />
+    <script src="https://unpkg.com/leaflet@1.8.0/dist/leaflet.js"
+        integrity="sha512-BB3hKbKWOc9Ez/TAwyWxNXeoV9c1v6FIeYiBieIWkpLjauysF18NzgR1MBNBXf8/KABdlkX68nAhlwcDFLGPCQ=="
+        crossorigin=""></script>
+    <script src='https://unpkg.com/@turf/turf@6/turf.min.js'></script>
+    <style>
+        #map {
+            width: 90vw;
+            height: 90vh;
+        }
+    </style>
+</head>
+
+<body>
+    <p>
+        <label for="inputMoto">もとデータのインポート</label>
+        <input type="file" id="inportMoto" accept=".geojson" onchange="importMoto(event)">
+    </p>
+    <p>
+        <label for="inputProgress">進捗のインポート</label>
+        <input type="file" id="inputProgress" accept=".geojson" onchange="importProgress(event)">
+    </p>
+    <button onclick="exportGeoJson(kuttuke,'exportProgress')">進捗のエクスポート</button>
+    <button onclick="testButton()">テストボタン</button>
+    <details>
+        <summary>一応の機能</summary>
+        <p>
+            <label for="inputPolygonGeoJson">PolygonのGeoJsonをMultiPolygonに変換する</label>
+            <input type="file" id="inputPolygonGeoJson" accept=".geojson"
+                onchange="convertPolygontoMultiPolygon(event)">
+        </p>
+    </details>
+
+
+
+    <div id="map"></div>
+    <script>
+
+        const map = L.map("map", {
+            center: [34.8906249, 138.8246531],
+            zoom: 7,
+        });
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '© <a href="http://osm.org/copyright">OpenStreetMap</a> contributors, <a href="http://creativecommons.org/licenses/by-sa/2.0/">CC-BY-SA</a>',
+        }).addTo(map);
+
+        // レイヤーたち
+        // もと、くっつけ、くっつけ円
+        // [もと]と[くっつけ円]の重なり部分 と くっつけ を足す
+
+        let moto = L.geoJson() // もとレイヤー
+        moto.addTo(map)
+
+        let kuttuke = L.geoJson("", { style: { color: "#ff33bb" } }) // くっつけレイヤー。レイヤーはMultiPolygonで1枚に。
+        kuttuke.addTo(map)
+
+        map.on("click", e => {
+            updateKuttuke([e.latlng.lng, e.latlng.lat], 0.025)
+        })
+
+        function updateKuttuke(latlng, radius) {
+            // くっつけの処理。今は地図クリックで反応しているが、将来的には位置情報で反応するようにする。
+            let circle = turf.circle(latlng, radius, { steps: 10 }) // くっつけ円を用意して
+            moto.eachLayer(layer => { // 各もとレイヤーに対して処理(もとレイヤーはMultiPolygonではないため)
+                let intersect = turf.intersect(circle, layer.feature.geometry) // 重なりをチェックして
+                if (intersect) { // 重なりがある(nullじゃない)場合にくっつける
+                    if (kuttuke.getLayers().length === 0) { // くっつけが0、つまり最初のくっつけの場合、
+                        kuttuke.addData(intersect) // つっこむ
+                    } else { // 2回目以降のくっつけの場合、
+                        let uni = turf.union(kuttuke.getLayers()[0].feature.geometry, intersect) // くっつけレイヤーと、重なり部分をあわせ、
+                        kuttuke.remove() // くっつけレイヤーをリセット
+                        kuttuke = L.geoJson(uni, { style: { color: "#ff33bb" } })
+                        kuttuke.addTo(map)
+                        /* かつてのコード。くっつけレイヤーは必ず1枚にすること。
+                        // kuttuke.eachLayer(layer => {
+                        //     console.log("1回目")
+                        //     let uni = turf.union(layer.feature.geometry, intersect)
+                        //     // console.log(uni)
+                        //     // 1. てかkuttukeのeach内でkuttukeをいじっちゃってるじゃん
+                        //     // -> どうやら大丈夫らしい。中で操作した内容は、外に出たときに反映されるっぽい。
+                        //     // 2. eachで回すたびに消してたら、連結してない部分(飛び地)が消えちゃうじゃん。だってレイヤー違うもん
+                        //     // -> どうやら全部1枚のレイヤーにまとまるっぽい。1枚で管理していれば上記の心配はなさそう。
+                        //     kuttuke.remove()
+                        //     kuttuke = L.geoJson(uni)
+                        //     kuttuke.addTo(map)
+                        // }) */
+                    }
+
+                }
+            })
+        }
+
+
+        let watch_id = undefined
+
+        function success(position) {
+            updateKuttuke([position.coords.latitude, position.coords.longitude], 0.025)
+        }
+
+        window.addEventListener("load", () => {
+            watch_id = navigator.geolocation.watchPosition(success, function (e) { alert(e.message); })
+        })
+
+        // -----
+        function testButton() {
+            let motoArea = 0
+            let kuttukeArea = 0
+            moto.eachLayer(layer => {
+                motoArea += turf.area(layer.feature.geometry)
+            })
+            if (kuttuke.getLayers().length !== 0) {
+                kuttukeArea = turf.area(kuttuke.getLayers()[0].feature.geometry)
+            }
+            console.log(`${kuttukeArea} / ${motoArea}`)
+            console.log(`${kuttukeArea / motoArea}`)
+        }
+
+        function importGeoJsonFromInput(importedLayer, e) {
+            // console.log(e)
+            const input = e.target
+            const file = input.files[0]
+            const reader = new FileReader()
+            return new Promise((resolve, reject) => {
+                reader.onload = () => {
+                    // データ読み込み。removeやらaddDataやら、全部やる。
+                    importedLayer.remove()
+                    importedLayer = L.geoJson()
+                    importedLayer.addTo(map)
+                    importedLayer.addData(JSON.parse(reader.result))
+                    // importedLayer.eachLayer(layer => {
+                    //     各レイヤーに対する処理
+                    //     console.log(layer)
+                    // })
+                    // console.log(importedLayer)
+                    resolve(importedLayer)
+                }
+                reader.readAsText(file)
+            })
+        }
+
+        function importMoto(e) {
+            importGeoJsonFromInput(moto, e).then(result => {
+                // Promiseにthenで応対。
+                moto = result
+            })
+        }
+
+        function importProgress(e) {
+            importGeoJsonFromInput(kuttuke, e).then(result => {
+                // Promiseにthenで応対。
+                kuttuke = result
+                kuttuke.setStyle({ color: "#ff33bb" })
+            })
+            // なお、この関数は、async, awaitをつかって下のように書くこともできる。
+            // async function importMoto(e) {
+            //     moto = await importGeoJsonFromInput(moto, e)
+            //     console.log(moto)
+            // }
+        }
+
+        function exportGeoJson(geojsonData, filename) {
+            // 【aタグを使ったダウンロードのやりかた】
+            const a = document.createElement("a") // aタグ作って
+            document.body.appendChild(a) // aタグアペンド
+            // const now = new Date()
+            // a.download = `${now.getFullYear()}${now.getMonth()}${now.getDate()}${now.getHours()}${now.getMinutes()}${now.getSeconds()}.geojson`
+            a.download = `${filename}.geojson` // aタグのdownload要素を指定。ファイル名になる。
+            downloadContentBlob = new Blob([JSON.stringify(geojsonData.toGeoJSON())], { type: "application/json" }) // ダウンロードするBlobを作成。第一引数は[]でくくり、第二はtypeでMIMEタイプを指定。
+            a.href = URL.createObjectURL(downloadContentBlob) // BlobからダウンロードURLを作成
+            a.click() // クリックしたことにしてダウンロード
+            a.remove() //終わったらさよならする
+        }
+
+        function convertPolygontoMultiPolygon(e) {
+            let PolygonGeoJson = L.geoJson()
+            importGeoJsonFromInput(PolygonGeoJson, e).then(result => {
+                // thenのなかに書きましょう。
+                PolygonGeoJson = result
+                let MultiPolygonGeoJson = L.geoJson()
+                PolygonGeoJson.eachLayer(layer => {
+                    if (MultiPolygonGeoJson.getLayers().length === 0) {
+                        MultiPolygonGeoJson.addData(layer.feature.geometry)
+                    } else {
+                        console.log(MultiPolygonGeoJson)
+                        let uni = turf.union(layer.feature.geometry, MultiPolygonGeoJson.getLayers()[0].feature.geometry)
+                        MultiPolygonGeoJson.remove()
+                        MultiPolygonGeoJson = L.geoJson(uni)
+                    }
+                })
+                // MultiPolygonGeoJson.setStyle({ color: "#ff33bb" })
+                // MultiPolygonGeoJson.addTo(map)
+                exportGeoJson(MultiPolygonGeoJson, "exportMultiPolygon")
+            })
+        }
+    </script>
+</body>
+
+</html>
