@@ -104,6 +104,7 @@
         let watch_id = undefined
 
         function success(position) {
+            console.log([position.coords.latitude, position.coords.longitude])
             updateKuttuke([position.coords.latitude, position.coords.longitude], 0.025)
         }
 
