@@ -114,6 +114,7 @@
 
         window.addEventListener("load", () => {
             load()
+            navigator.geolocation.getCurrentPosition(pos =>{map.setView([pos.coords.latitude, pos.coords.longitude])})
             watch_id = navigator.geolocation.watchPosition(success, function (e) { alert(e.message); })
         })
 
